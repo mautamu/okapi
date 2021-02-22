@@ -5,7 +5,7 @@
   <title>Rapi Docs</title>
   <script type="module" src="https://unpkg.com/rapidoc/dist/rapidoc-min.js"></script>
   <script>
-    /**
+    /*
     * Slug a string to create something we can use in the url
     */
     const slug = (s) => s
@@ -14,7 +14,7 @@
 
     const routes = [ROUTES];  // right routes are inserted from Rust
 
-    /**
+    /*
     * Finds the base url on which the documentation is served.
     */
     const findBaseUrl = () => {
@@ -31,7 +31,7 @@
 
     const baseUrl = findBaseUrl();
 
-    /**
+    /*
     * Obtains the currently selected spec, as defined by the url
     */
     const getCurSpec = () => {
@@ -42,13 +42,13 @@
     const updateSpec = async (resourceUrl) => {
       const rapi = document.getElementById('rapi');
       console.log(resourceUrl);
-      const resp = await rapi.loadSpec(resourceUrl)
+      const resp = await rapi.loadSpec(resourceUrl);
       console.log(resp);
     };
 
-    /**
-    * Called when the selected value in the select changes. Updates the displayed
-    * documentation, and then updates the url for deep linking purposes.
+    /*
+    * Called when the selected value in the select changes. Updates the displayed documentation, and
+    * then updates the url for deep linking purposes.
     */
     const setUrl = () => {
       // first query the needed info from the select
@@ -63,7 +63,6 @@
       window.history.pushState({}, '', `${baseUrl}/${slug(resourceName)}`);
     };
 
-    // 
     window.onload = (event) => {
       const select = document.getElementById('select');
       // add all possible options to the select on page load
