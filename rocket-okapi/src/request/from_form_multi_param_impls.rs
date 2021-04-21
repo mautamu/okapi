@@ -61,7 +61,7 @@ where
             .and_then(|m| m.description.clone());
         parameter_list.push(Parameter {
             name: key,
-            location: "form".to_owned(),
+            location: "query".to_owned(),
             description,
             required: parameter_required,
             deprecated: false,
