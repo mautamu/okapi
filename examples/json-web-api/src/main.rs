@@ -73,7 +73,7 @@ fn main() {
             "/swagger-ui/",
             make_swagger_ui(&SwaggerUIConfig {
                 url: "../openapi.json".to_owned(),
-                ..Default::default()
+                ..SwaggerUIConfig::default()
             }),
         )
         .launch()

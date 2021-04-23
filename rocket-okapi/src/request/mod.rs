@@ -3,7 +3,7 @@ mod from_param_impls;
 
 use super::gen::OpenApiGenerator;
 use super::Result;
-use okapi::openapi3::*;
+use okapi::openapi3::{Parameter, RequestBody};
 
 /// This trait means that the implementer can be used as a `FromData` request guard, and that this
 /// can also be documented.

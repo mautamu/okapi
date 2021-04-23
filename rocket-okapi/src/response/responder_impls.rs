@@ -1,5 +1,5 @@
-use super::OpenApiResponder;
-use crate::{gen::OpenApiGenerator, util::*, OpenApiError};
+use super::OpenApiResponderInner;
+use crate::{gen::OpenApiGenerator, util::{add_content_response, add_schema_response, ensure_status_code_exists, produce_any_responses, set_content_type, set_status_code}};
 use okapi::openapi3::Responses;
 use rocket::response::Responder;
 use rocket_contrib::json::{Json, JsonValue}; // TODO json feature flag
@@ -50,7 +50,7 @@ impl OpenApiResponder<'_> for Vec<u8> {
             &mut responses,
             200,
             "application/octet-stream",
-            Default::default(),
+            okapi::openapi3::MediaType::default(),
         )?;
         Ok(responses)
     }

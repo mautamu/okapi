@@ -115,7 +115,7 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
                     parameters,
                     summary: #title,
                     description: #desc,
-                    ..Default::default()
+                    ..okapi::openapi3::Operation::default()
                 },
             });
             Ok(())
@@ -125,8 +125,8 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
 
 fn unit_type() -> Type {
     Type::Tuple(TypeTuple {
-        paren_token: Default::default(),
-        elems: Default::default(),
+        paren_token: syn::token::Paren::default(),
+        elems: syn::punctuated::Punctuated::default(),
     })
 }
 
