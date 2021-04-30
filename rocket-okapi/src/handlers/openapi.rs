@@ -2,7 +2,6 @@ use okapi::openapi3::{OpenApi, Server};
 use rocket::route::{Handler, Outcome};
 use rocket::http::{ContentType, Method};
 use rocket::response::content::Custom;
-use rocket::route::{Handler, Outcome};
 use rocket::{Data, Request, Route};
 
 /// A handler type that is used to serve the `openapi.json` files.
