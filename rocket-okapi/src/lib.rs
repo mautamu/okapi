@@ -9,7 +9,7 @@
 //! First, add the following lines to your `Cargo.toml`
 //! ```toml
 //! [dependencies]
-//! rocket = { version = "0.5.0-rc.1", default-features = false, features = ["json"] }
+//! rocket = { git = "https://github.com/SergioBenitez/Rocket", default-features = false, features = ["json"] }
 //! schemars = "0.8"
 //! okapi = { version = "0.6.0-alpha-1" }
 //! rocket_okapi = { version = "0.8.0-alpha-1", features = ["swagger"] }
