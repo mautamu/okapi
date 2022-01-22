@@ -2,21 +2,47 @@
 name = "rocket_okapi"
 description = "OpenAPI (AKA Swagger) document generation for Rocket applications"
 repository = "https://github.com/GREsau/okapi"
-version = "0.6.0"
+version = "0.8.0-rc.1"
 authors = ["Graham Esau <gesau@hotmail.co.uk>"]
 edition = "2018"
 license = "MIT"
+readme = "../README.md"
 keywords = ["rust", "openapi", "swagger", "rocket"]
+categories = ["web-programming"]
 
 [dependencies]
-schemars = { version = "0.8.0" }
-okapi = { version = "0.5.0", path = "../okapi" }
-rocket_okapi_codegen = { version = "0.6.0", path = "../rocket-okapi-codegen" }
-rocket = { version = "0.4.3", default-features = false }
+rocket = { version = "0.5.0-rc.1", default-features = false, features = ["json"] }
+schemars = { version = "0.8" }
+okapi = { version = "0.7.0-rc.1", path = "../okapi" }
+rocket_okapi_codegen = { version = "=0.8.0-rc.1", path = "../rocket-okapi-codegen" }
 serde = "1.0"
 serde_json = "1.0"
+log = "0.4"
+# Rocket dependency but not re-exported
+# See issue: https://github.com/GREsau/schemars/issues/104
+# time = { version = "0.2.27" }
+# Rocket dependency but not re-exported
+either = "1"
 
-[dependencies.rocket_contrib]
-version = "0.4.3"
-default-features = false
-features = ["json"]
+[features]
+default = ["preserve_order"]
+
+# Preserve the order of items in schema and other part of the OpenAPI documentation.
+preserve_order = ["schemars/preserve_order", "okapi/preserve_order"]
+# Feature to enable Swagger UI for rendering documentation
+# Project: https://github.com/swagger-api/swagger-ui
+swagger = []
+# Feature to enable RapiDoc for rendering documentation
+# Project: https://github.com/mrin9/RapiDoc
+rapidoc = []
+# Allow the use of UUIDs
+uuid = ["rocket/uuid", "schemars/uuid"]
+# Re-export Rocket feature flag
+# https://docs.rs/rocket/0.5.0-rc.1/rocket/serde/msgpack/struct.MsgPack.html
+msgpack = ["rocket/msgpack"]
+# Re-export Rocket feature flag
+# https://rocket.rs/v0.5-rc/guide/requests/#secret-key
+secrets = ["rocket/secrets"]
+
+[package.metadata.docs.rs]
+features = ["swagger", "rapidoc"]

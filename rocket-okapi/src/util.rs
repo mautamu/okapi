@@ -1,5 +1,5 @@
 use crate::{OpenApiError, Result};
-use okapi::openapi3::*;
+use okapi::openapi3::{MediaType, RefOr, Response, Responses, SchemaObject};
 use okapi::Map;
 
 // FIXME this whole file is a huge mess...
@@ -7,8 +7,13 @@ use okapi::Map;
 /// Takes a `Responses` struct, and sets the status code to the status code provided for each
 /// response in the `Responses`.
 pub fn set_status_code(responses: &mut Responses, status: u16) -> Result<()> {
-    let old_responses = std::mem::replace(&mut responses.responses, Map::new());
-    let new_response = ensure_not_ref(ensure_status_code_exists(responses, status))?;
+    let old_responses = std::mem::take(&mut responses.responses);
+    // Use `0` as `default`
+    let new_response = if status == 0 {
+        ensure_not_ref(add_default_response_code(responses))?
+    } else {
+        ensure_not_ref(ensure_status_code_exists(responses, status))?
+    };
     for (_, mut response) in old_responses {
         *new_response =
             produce_either_response(new_response.clone(), ensure_not_ref(&mut response)?.clone());
@@ -22,6 +27,55 @@ pub fn ensure_status_code_exists(responses: &mut Responses, status: u16) -> &mut
     responses
         .responses
         .entry(status.to_string())
+        .or_insert_with(|| Response::default().into())
+}
+
+/// Change all responses in the map to "default" response code.
+/// In case of doubles the first items will be reserved.
+pub fn change_all_responses_to_default(responses: &mut Responses) {
+    let mut response_value = None;
+    // Get first response
+    if let Some((_response_code, response)) = responses.responses.iter().next() {
+        response_value = Some(response.clone());
+    }
+    // Remove old responses
+    responses.responses.clear();
+
+    // Add new default response
+    if let Some(response_value) = response_value {
+        responses
+            .responses
+            .insert("default".to_owned(), response_value);
+    }
+}
+
+/// Add `default` response with a Schema, for when status code is defined at runtime.
+/// <https://spec.openapis.org/oas/v3.0.0#fixed-fields-13>
+pub fn add_default_response_schema(
+    responses: &mut Responses,
+    content_type: impl ToString,
+    schema: SchemaObject,
+) -> &mut RefOr<Response> {
+    let media = MediaType {
+        schema: Some(schema),
+        ..MediaType::default()
+    };
+    let response = add_default_response_code(responses);
+    let response_no_ref = if let Ok(resp) = ensure_not_ref(response) {
+        resp
+    } else {
+        return response;
+    };
+    add_media_type(&mut response_no_ref.content, content_type, media);
+    response
+}
+
+/// Add `default` response, for when status code is defined at runtime.
+/// <https://spec.openapis.org/oas/v3.0.0#fixed-fields-13>
+pub fn add_default_response_code(responses: &mut Responses) -> &mut RefOr<Response> {
+    responses
+        .responses
+        .entry("default".to_owned())
         .or_insert_with(|| Response::default().into())
 }
 
@@ -59,7 +113,7 @@ pub fn set_content_type(responses: &mut Responses, content_type: impl ToString) 
         let mt = if content.values().len() == 1 {
             content.values().next().unwrap().clone()
         } else {
-            content.values().fold(Default::default(), |mt, mt2| {
+            content.values().fold(MediaType::default(), |mt, mt2| {
                 accept_either_media_type(mt, mt2.clone())
             })
         };
@@ -78,7 +132,7 @@ pub fn add_schema_response(
 ) -> Result<()> {
     let media = MediaType {
         schema: Some(schema),
-        ..Default::default()
+        ..MediaType::default()
     };
     add_content_response(responses, status, content_type, media)
 }

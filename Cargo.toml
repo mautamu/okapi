@@ -3,5 +3,9 @@ members = [
     "okapi",
     "rocket-okapi",
     "rocket-okapi-codegen",
-    "examples/json-web-api"
+    "examples/json-web-api",
+    "examples/custom_schema",
+    "examples/uuid",
+    "examples/special-types",
+    "examples/secure_request_guard"
 ]

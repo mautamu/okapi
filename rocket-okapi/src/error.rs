@@ -1,3 +1,4 @@
+use okapi::merge::MergeError;
 use std::error::Error;
 use std::fmt;
 
@@ -12,6 +13,7 @@ pub struct OpenApiError {
 
 impl OpenApiError {
     /// Create a new `OpenApiError` containing a message.
+    #[must_use]
     pub fn new(msg: String) -> Self {
         OpenApiError { msg }
     }
@@ -24,3 +26,9 @@ impl fmt::Display for OpenApiError {
 }
 
 impl Error for OpenApiError {}
+
+impl From<MergeError> for OpenApiError {
+    fn from(error: MergeError) -> Self {
+        Self::new(error.msg)
+    }
+}

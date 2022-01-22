@@ -1,24 +1,19 @@
 use crate::get_add_operation_fn_name;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
+use quote::quote;
 use syn::{parse::Parser, punctuated::Punctuated, token::Comma, Path, Result};
 
-pub fn parse(routes: TokenStream) -> TokenStream {
-    parse_inner(routes)
-        .unwrap_or_else(|e| e.to_compile_error())
-        .into()
-}
-
-fn parse_inner(routes: TokenStream) -> Result<TokenStream2> {
+/// Parses routes and returns a function that takes `OpenApiSettings` and returns `OpenApi` spec.
+pub fn create_openapi_spec(routes: TokenStream) -> Result<TokenStream2> {
     let paths = <Punctuated<Path, Comma>>::parse_terminated.parse(routes)?;
-    let add_operations = create_add_operations(paths.clone())?;
+    let add_operations = create_add_operations(paths);
     Ok(quote! {
-        {
-            let settings = ::rocket_okapi::settings::OpenApiSettings::new();
-            let mut gen = ::rocket_okapi::gen::OpenApiGenerator::new(settings.clone());
+        |settings: &::rocket_okapi::settings::OpenApiSettings| -> ::rocket_okapi::okapi::openapi3::OpenApi {
+            let mut gen = ::rocket_okapi::gen::OpenApiGenerator::new(settings);
             #add_operations
             let mut spec = gen.into_openapi();
-            let mut info = ::okapi::openapi3::Info {
+            let mut info = ::rocket_okapi::okapi::openapi3::Info {
                 title: env!("CARGO_PKG_NAME").to_owned(),
                 version: env!("CARGO_PKG_VERSION").to_owned(),
                 ..Default::default()
@@ -27,29 +22,27 @@ fn parse_inner(routes: TokenStream) -> Result<TokenStream2> {
                 info.description = Some(env!("CARGO_PKG_DESCRIPTION").to_owned());
             }
             if !env!("CARGO_PKG_REPOSITORY").is_empty() {
-                info.contact = Some(::okapi::openapi3::Contact{
+                info.contact = Some(::rocket_okapi::okapi::openapi3::Contact{
                     name: Some("Repository".to_owned()),
                     url: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
                     ..Default::default()
                 });
             }
             if !env!("CARGO_PKG_HOMEPAGE").is_empty() {
-                info.contact = Some(::okapi::openapi3::Contact{
+                info.contact = Some(::rocket_okapi::okapi::openapi3::Contact{
                     name: Some("Homepage".to_owned()),
-                    url: Some(env!("CARGO_PKG_REPOSITORY").to_owned()),
+                    url: Some(env!("CARGO_PKG_HOMEPAGE").to_owned()),
                     ..Default::default()
                 });
             }
             spec.info = info;
 
-            let mut routes = ::rocket::routes![#paths];
-            routes.push(::rocket_okapi::handlers::OpenApiHandler::new(spec).into_route(&settings.json_path));
-            routes
+            spec
         }
     })
 }
 
-fn create_add_operations(paths: Punctuated<Path, Comma>) -> Result<TokenStream2> {
+fn create_add_operations(paths: Punctuated<Path, Comma>) -> TokenStream2 {
     let function_calls = paths.into_iter().map(|path| {
         let fn_name = fn_name_for_add_operation(path.clone());
         let operation_id = operation_id(&path);
@@ -58,9 +51,9 @@ fn create_add_operations(paths: Punctuated<Path, Comma>) -> Result<TokenStream2>
                 .expect(&format!("Could not generate OpenAPI operation for `{}`.", stringify!(#path)));
         }
     });
-    Ok(quote! {
+    quote! {
         #(#function_calls)*
-    })
+    }
 }
 
 fn fn_name_for_add_operation(mut fn_path: Path) -> Path {

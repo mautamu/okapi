@@ -1,14 +1,9 @@
-#![feature(proc_macro_hygiene, decl_macro)]
-
-#[macro_use]
-extern crate rocket;
-#[macro_use]
-extern crate rocket_okapi;
-
-use rocket::request::{Form, FromForm};
-use rocket_contrib::json::Json;
-use rocket_okapi::swagger_ui::*;
-use schemars::JsonSchema;
+use rocket::form::FromForm;
+use rocket::{get, post, serde::json::Json};
+use rocket_okapi::okapi::schemars;
+use rocket_okapi::okapi::schemars::JsonSchema;
+use rocket_okapi::settings::UrlObject;
+use rocket_okapi::{openapi, openapi_get_routes, rapidoc::*, swagger_ui::*};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -16,7 +11,6 @@ use serde::{Deserialize, Serialize};
 struct User {
     user_id: u64,
     username: String,
-    #[serde(default)]
     #[schemars(example = "example_email")]
     email: Option<String>,
 }
@@ -28,7 +22,7 @@ fn example_email() -> &'static str {
 /// # Get all users
 ///
 /// Returns all users in the system.
-#[openapi]
+#[openapi(tag = "Users")]
 #[get("/user")]
 fn get_all_users() -> Json<Vec<User>> {
     Json(vec![User {
@@ -41,7 +35,7 @@ fn get_all_users() -> Json<Vec<User>> {
 /// # Get user
 ///
 /// Returns a single user by ID.
-#[openapi]
+#[openapi(tag = "Users")]
 #[get("/user/<id>")]
 fn get_user(id: u64) -> Option<Json<User>> {
     Some(Json(User {
@@ -54,7 +48,7 @@ fn get_user(id: u64) -> Option<Json<User>> {
 /// # Get user by name
 ///
 /// Returns a single user by username.
-#[openapi]
+#[openapi(tag = "Users")]
 #[get("/user_example?<user_id>&<name>&<email>")]
 fn get_user_by_name(user_id: u64, name: String, email: Option<String>) -> Option<Json<User>> {
     Some(Json(User {
@@ -65,7 +59,7 @@ fn get_user_by_name(user_id: u64, name: String, email: Option<String>) -> Option
 }
 
 /// # Create user
-#[openapi]
+#[openapi(tag = "Users")]
 #[post("/user", data = "<user>")]
 fn create_user(user: Json<User>) -> Json<User> {
     user
@@ -90,17 +84,18 @@ struct Post {
 /// # Create post using query params
 ///
 /// Returns the created post.
-#[openapi]
+#[openapi(tag = "Posts")]
 #[get("/post_by_query?<post..>")]
-fn create_post_by_query(post: Form<Post>) -> Option<Json<Post>> {
-    Some(Json(post.into_inner()))
+fn create_post_by_query(post: Post) -> Option<Json<Post>> {
+    Some(Json(post))
 }
 
-fn main() {
-    rocket::ignite()
+#[rocket::main]
+async fn main() {
+    let launch_result = rocket::build()
         .mount(
             "/",
-            routes_with_openapi![
+            openapi_get_routes![
                 get_all_users,
                 get_user,
                 get_user_by_name,
@@ -116,5 +111,25 @@ fn main() {
                 ..Default::default()
             }),
         )
-        .launch();
+        .mount(
+            "/rapidoc/",
+            make_rapidoc(&RapiDocConfig {
+                general: GeneralConfig {
+                    spec_urls: vec![UrlObject::new("General", "../openapi.json")],
+                    ..Default::default()
+                },
+                hide_show: HideShowConfig {
+                    allow_spec_url_load: false,
+                    allow_spec_file_load: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+        )
+        .launch()
+        .await;
+    match launch_result {
+        Ok(()) => println!("Rocket shut down gracefully."),
+        Err(err) => println!("Rocket had an error: {}", err),
+    };
 }

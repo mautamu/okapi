@@ -1,14 +1,20 @@
-#[macro_use]
-extern crate quote;
-#[macro_use]
-extern crate syn;
+#![forbid(unsafe_code)]
+#![deny(clippy::all)]
 
-extern crate proc_macro;
+//! This crate is used by [`rocket_okapi`](https://crates.io/crates/rocket_okapi)
+//! for code generation. This crate includes the procedural macros like:
+//! - `#[openapi]`: To generate the documentation for an endpoint/route.
+//! - `openapi_routes![...]`: Returns a closure for generating routes.
+//! - `openapi_spec![...]`: Returns a closure for generating OpenApi objects.
+//! - `#[derive(OpenApiFromRequest)]`: Implement `OpenApiFromRequest` trait for a given struct.
+//!
 
 mod openapi_attr;
-mod routes_with_openapi;
+mod openapi_spec;
+mod parse_routes;
 
 use proc_macro::TokenStream;
+use quote::quote;
 use syn::Ident;
 
 /// A proc macro to be used in tandem with one of `Rocket`'s endpoint macros. It requires that all
@@ -22,7 +28,7 @@ use syn::Ident;
 /// #[openapi]
 /// #[get("/hello/<number>")]
 /// fn hello_world(number: i32) -> String {
-///     format!("Hellow world number {}", number)
+///     format!("Hello world number {}", number)
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -33,12 +39,101 @@ pub fn openapi(args: TokenStream, mut input: TokenStream) -> TokenStream {
     input
 }
 
-/// A replacement macro for `rocket::routes`. The key differences are that this macro will add an
-/// additional element to the resulting `Vec<rocket::Route>`, which serves a static file called
-/// `openapi.json`. This file can then be used to display the routes in the swagger ui.
+/// Generate and return a closure that can be used to generate the routes.
+///
+/// This closure take 2 arguments:
+/// - `spec_opt`: `Option<rocket_okapi::okapi::openapi3::OpenApi>`
+/// - `settings`: `rocket_okapi::settings::OpenApiSettings`
+///
+/// It returns `Vec<::rocket::Route>`.
+///
+/// If `spec_opt` is set to `None` it will not add a route to serve the `openapi.json` file.
+///
+/// Example:
+/// ```rust,ignore
+/// let settings = rocket_okapi::settings::OpenApiSettings::new();
+/// let spec = rocket_okapi::openapi_spec![get_message, post_message](settings.clone());
+/// let routes = rocket_okapi::openapi_routes![get_message, post_message](Some(spec), settings);
+/// ```
 #[proc_macro]
-pub fn routes_with_openapi(input: TokenStream) -> TokenStream {
-    routes_with_openapi::parse(input)
+pub fn openapi_routes(input: TokenStream) -> TokenStream {
+    let routes = parse_routes::parse_routes(input).unwrap_or_else(|e| e.to_compile_error());
+    (quote! {
+        #routes
+    })
+    .into()
+}
+
+/// Generate and return a closure that can be used to generate the OpenAPI specification.
+///
+/// This closure take 1 argument:
+/// - `settings`: `rocket_okapi::settings::OpenApiSettings`
+///
+/// It returns `rocket_okapi::okapi::openapi3::OpenApi`.
+///
+/// Example:
+/// ```rust,ignore
+/// let settings = rocket_okapi::settings::OpenApiSettings::new();
+/// let spec = rocket_okapi::openapi_spec![get_message, post_message](settings);
+/// ```
+#[proc_macro]
+pub fn openapi_spec(input: TokenStream) -> TokenStream {
+    let spec = openapi_spec::create_openapi_spec(input).unwrap_or_else(|e| e.to_compile_error());
+    (quote! {
+        #spec
+    })
+    .into()
+}
+
+/// Derive marco for the `OpenApiFromRequest` trait.
+///
+/// This derive trait is a very simple implementation for anything that does not
+/// require any other special headers or parameters to be validated.
+///
+/// Use:
+/// ```rust,ignore
+/// use rocket_okapi::request::OpenApiFromRequest;
+///
+/// #[derive(OpenApiFromRequest)]
+/// pub struct MyStructName;
+/// ```
+///
+/// This code is equivalent to:
+/// ```rust,ignore
+/// use rocket_okapi::request::{OpenApiFromRequest, RequestHeaderInput};
+/// use rocket_okapi::gen::OpenApiGenerator;
+///
+/// pub struct MyStructName;
+///
+/// impl<'r> OpenApiFromRequest<'r> for MyStructName {
+///     fn from_request_input(
+///         _gen: &mut OpenApiGenerator,
+///         _name: String,
+///         _required: bool,
+///     ) -> rocket_okapi::Result<RequestHeaderInput> {
+///         Ok(RequestHeaderInput::None)
+///     }
+/// }
+/// ```
+#[proc_macro_derive(OpenApiFromRequest)]
+pub fn open_api_from_request_derive(input: TokenStream) -> TokenStream {
+    // Construct a representation of Rust code as a syntax tree
+    // that we can manipulate
+    let ast: syn::DeriveInput = syn::parse(input).unwrap();
+    let name = &ast.ident;
+
+    let gen = quote! {
+        impl<'r> rocket_okapi::request::OpenApiFromRequest<'r> for #name {
+            fn from_request_input(
+                _gen: &mut rocket_okapi::gen::OpenApiGenerator,
+                _name: String,
+                _required: bool,
+            ) -> rocket_okapi::Result<rocket_okapi::request::RequestHeaderInput> {
+                Ok(rocket_okapi::request::RequestHeaderInput::None)
+            }
+        }
+    };
+    gen.into()
 }
 
 fn get_add_operation_fn_name(route_fn_name: &Ident) -> Ident {

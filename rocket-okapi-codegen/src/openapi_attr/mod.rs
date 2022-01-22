@@ -5,15 +5,19 @@ use crate::get_add_operation_fn_name;
 use darling::FromMeta;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
+use quote::quote;
 use quote::ToTokens;
 use rocket_http::Method;
 use std::collections::BTreeMap as Map;
-use syn::{AttributeArgs, FnArg, Ident, ItemFn, ReturnType, Type, TypeTuple};
+use syn::{parse_macro_input, AttributeArgs, FnArg, Ident, ItemFn, ReturnType, Type, TypeTuple};
 
 #[derive(Debug, Default, FromMeta)]
 #[darling(default)]
 struct OpenApiAttribute {
     pub skip: bool,
+
+    #[darling(multiple, rename = "tag")]
+    pub tags: Vec<String>,
 }
 
 pub fn parse(args: TokenStream, input: TokenStream) -> TokenStream {
@@ -32,7 +36,7 @@ pub fn parse(args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     match route_attr::parse_attrs(&input.attrs) {
-        Ok(route) => create_route_operation_fn(input, route),
+        Ok(route) => create_route_operation_fn(input, route, okapi_attr.tags),
         Err(e) => e,
     }
 }
@@ -49,28 +53,28 @@ fn create_empty_route_operation_fn(route_fn: ItemFn) -> TokenStream {
     })
 }
 
-fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> TokenStream {
+fn create_route_operation_fn(
+    route_fn: ItemFn,
+    route: route_attr::Route,
+    tags: Vec<String>,
+) -> TokenStream {
     let arg_types = get_arg_types(route_fn.sig.inputs.into_iter());
     let return_type = match route_fn.sig.output {
         ReturnType::Type(_, ty) => *ty,
         ReturnType::Default => unit_type(),
     };
-    let request_body = match &route.data_param {
-        Some(arg) => {
-            let ty = match arg_types.get(arg) {
-                Some(ty) => ty,
-                None => return quote! {
-                    compile_error!(concat!("Could not find argument ", #arg, " matching data param."));
-                }.into()
-            };
-            quote! {
-                Some(<#ty as ::rocket_okapi::request::OpenApiFromData>::request_body(gen)?.into())
-            }
-        }
-        None => quote! { None },
-    };
 
+    // ----- Check route info -----
+
+    // -- Parse Query Strings --
+    // https://rocket.rs/v0.5-rc/guide/requests/#query-strings
     let mut params = Vec::new();
+    let mut params_nested_list = Vec::new();
+    let mut params_request_guards = Vec::new();
+    let mut request_guard_responses = Vec::new();
+    // Create a list of all the already used parameters.
+    // This is later used to see what parameters are Request Guards. (aka left over)
+    let mut params_names_used = Vec::new();
     // Path parameters: `/<id>/<name>`
     for arg in route.path_params() {
         let ty = match arg_types.get(arg) {
@@ -80,8 +84,23 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
             }
             .into(),
         };
+        params_names_used.push(arg.to_owned());
         params.push(quote! {
             <#ty as ::rocket_okapi::request::OpenApiFromParam>::path_parameter(gen, #arg.to_owned())?.into()
+        })
+    }
+    // Multi Path parameters: `/<path..>`
+    if let Some(arg) = route.path_multi_param() {
+        let ty = match arg_types.get(arg) {
+            Some(ty) => ty,
+            None => return quote! {
+                compile_error!(concat!("Could not find argument ", #arg, " matching multi path param."));
+            }
+            .into(),
+        };
+        params_names_used.push(arg.to_owned());
+        params.push(quote! {
+            <#ty as ::rocket_okapi::request::OpenApiFromSegments>::path_multi_parameter(gen, #arg.to_owned())?.into()
         })
     }
     // Query parameters: `/?<id>&<name>`
@@ -93,26 +112,67 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
             }
             .into(),
         };
-        params.push(quote! {
-            <#ty as ::rocket_okapi::request::OpenApiFromFormValue>::query_parameter(gen, #arg.to_owned(), true)?.into()
+        params_names_used.push(arg.to_owned());
+        params_nested_list.push(quote! {
+            <#ty as ::rocket_okapi::request::OpenApiFromForm>::form_multi_parameter(gen, #arg.to_owned(), true)?.into()
         })
     }
-    let mut params_nested_list = Vec::new();
     // Multi Query parameters: `/?<param..>`
     for arg in route.query_multi_params() {
         let ty = match arg_types.get(arg) {
             Some(ty) => ty,
             None => return quote! {
-                compile_error!(concat!("Could not find argument ", #arg, " matching query multi param."));
+                compile_error!(concat!("Could not find argument ", #arg, " matching multi query param."));
             }.into(),
         };
+        params_names_used.push(arg.to_owned());
         params_nested_list.push(quote! {
-            <#ty as ::rocket_okapi::request::OpenApiFromQuery>::query_multi_parameter(gen, #arg.to_owned(), true)?.into()
+            <#ty as ::rocket_okapi::request::OpenApiFromForm>::form_multi_parameter(gen, #arg.to_owned(), true)?.into()
         })
     }
 
+    // -- Body Data --
+    // https://rocket.rs/v0.5-rc/guide/requests/#body-data
+    let request_body = match &route.data_param {
+        Some(data_param) => {
+            let ty = match arg_types.get(data_param) {
+                Some(ty) => ty,
+                None => return quote! {
+                    compile_error!(concat!("Could not find argument ", #data_param, " matching data param."));
+                }.into()
+            };
+            // Add parameter to list
+            params_names_used.push(data_param.clone());
+            quote! {
+                Some(<#ty as ::rocket_okapi::request::OpenApiFromData>::request_body(gen)?.into())
+            }
+        }
+        None => quote! { None },
+    };
+
+    // -- Request Guards --
+    // https://rocket.rs/v0.5-rc/guide/requests/#request-guards
+    // Request Guards is every that is not already used and thus not in `params_names_used`.
+    for (arg, ty) in &arg_types {
+        if !params_names_used.contains(arg) {
+            params_names_used.push(arg.to_owned());
+            params_request_guards.push(quote! {
+                <#ty as ::rocket_okapi::request::OpenApiFromRequest>::from_request_input(gen, #arg.to_owned(), true)?.into()
+            });
+            request_guard_responses.push(quote! {
+                <#ty as ::rocket_okapi::request::OpenApiFromRequest>::get_responses(gen)?.into()
+            });
+        }
+    }
+
     let fn_name = get_add_operation_fn_name(&route_fn.sig.ident);
-    let path = route.origin.path().replace("<", "{").replace(">", "}");
+    let path = route
+        .origin
+        .path()
+        .as_str()
+        .replace("<", "{")
+        .replace("..>", "}")
+        .replace(">", "}");
     let method = Ident::new(&to_pascal_case_string(route.method), Span::call_site());
     let (title, desc) = doc_attr::get_title_and_desc_from_doc(&route_fn.attrs);
     let title = match title {
@@ -124,32 +184,80 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
         None => quote!(None),
     };
 
+    let tags = tags
+        .into_iter()
+        .map(|tag| quote!(#tag.to_owned()))
+        .collect::<Vec<_>>();
+
     TokenStream::from(quote! {
         pub fn #fn_name(
             gen: &mut ::rocket_okapi::gen::OpenApiGenerator,
             op_id: String,
         ) -> ::rocket_okapi::Result<()> {
-            let responses = <#return_type as ::rocket_okapi::response::OpenApiResponder>::responses(gen)?;
+            let mut responses = <#return_type as ::rocket_okapi::response::OpenApiResponder>::responses(gen)?;
+            // Add responses from Request Guards.
+            let request_guard_responses = vec![#(#request_guard_responses),*];
+            for request_guard_response in request_guard_responses {
+                ::rocket_okapi::okapi::merge::merge_responses(&mut responses, &request_guard_response)?;
+            }
+
             let request_body = #request_body;
-            let mut parameters: Vec<::okapi::openapi3::RefOr<::okapi::openapi3::Parameter>> = vec![#(#params),*];
-            // add nested lists
-            let parameters_nested_list: Vec<Vec<::okapi::openapi3::Parameter>> = vec![#(#params_nested_list),*];
+            // Add the security scheme that are quired for all the routes.
+            let mut security_requirements = Vec::new();
+
+            // Combine all parameters from all sources
+            // Add all from `path_params` and `path_multi_param`
+            let mut parameters: Vec<::rocket_okapi::okapi::openapi3::RefOr<::rocket_okapi::okapi::openapi3::Parameter>> = vec![#(#params),*];
+            // Add all from `query_params` and `query_multi_params`
+            let parameters_nested_list: Vec<Vec<::rocket_okapi::okapi::openapi3::Parameter>> = vec![#(#params_nested_list),*];
             for inner_list in parameters_nested_list{
                 for item in inner_list{
                     // convert every item from `Parameter` to `RefOr<Parameter>``
                     parameters.push(item.into());
                 }
             }
+            // Body Data does not add any parameters
+
+            // Add all Request Guards
+            let request_guards_route: Vec<::rocket_okapi::request::RequestHeaderInput> = vec![#(#params_request_guards),*];
+            for request_guard_route in request_guards_route {
+                use ::rocket_okapi::request::RequestHeaderInput;
+                match request_guard_route {
+                    // Add Parameters
+                    RequestHeaderInput::Parameter(p) => {
+                       parameters.push(p.into());
+                    }
+                    // Add Security Schemes, different section.
+                    RequestHeaderInput::Security(name, schema, requirement) => {
+                        // Add/replace the security scheme (global).
+                        gen.add_security_scheme(name, schema);
+                        // Add the security scheme that are quired for all the route.
+                        security_requirements.push(requirement);
+                    }
+                    _ => {
+                    }
+                }
+            }
+
+            // Add `security` section if list is not empty
+            let security = if security_requirements.is_empty() {
+                None
+            } else {
+                Some(security_requirements)
+            };
+            // Add route/endpoint to OpenApi object.
             gen.add_operation(::rocket_okapi::OperationInfo {
                 path: #path.to_owned(),
                 method: ::rocket::http::Method::#method,
-                operation: ::okapi::openapi3::Operation {
+                operation: ::rocket_okapi::okapi::openapi3::Operation {
                     operation_id: Some(op_id),
                     responses,
                     request_body,
                     parameters,
                     summary: #title,
                     description: #desc,
+                    security,
+                    tags: vec![#(#tags),*],
                     ..Default::default()
                 },
             });
@@ -160,8 +268,8 @@ fn create_route_operation_fn(route_fn: ItemFn, route: route_attr::Route) -> Toke
 
 fn unit_type() -> Type {
     Type::Tuple(TypeTuple {
-        paren_token: Default::default(),
-        elems: Default::default(),
+        paren_token: syn::token::Paren::default(),
+        elems: syn::punctuated::Punctuated::default(),
     })
 }
 

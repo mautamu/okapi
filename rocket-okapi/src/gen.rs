@@ -1,30 +1,37 @@
 use crate::settings::OpenApiSettings;
 use crate::OperationInfo;
-use okapi::openapi3::*;
+use okapi::openapi3::{Components, OpenApi, Operation, PathItem, RefOr, SecurityScheme};
+use okapi::{Map, MapEntry};
 use rocket::http::Method;
 use schemars::gen::SchemaGenerator;
 use schemars::schema::SchemaObject;
 use schemars::JsonSchema;
-use schemars::{Map, MapEntry};
 use std::collections::HashMap;
-use std::iter::FromIterator;
 
 /// A struct that visits all `rocket::Route`s, and aggregates information about them.
 #[derive(Debug, Clone)]
 pub struct OpenApiGenerator {
     settings: OpenApiSettings,
     schema_generator: SchemaGenerator,
+    security_schemes: Map<String, SecurityScheme>,
     operations: Map<String, HashMap<Method, Operation>>,
 }
 
 impl OpenApiGenerator {
     /// Create a new `OpenApiGenerator` from the settings provided.
-    pub fn new(settings: OpenApiSettings) -> Self {
+    #[must_use]
+    pub fn new(settings: &OpenApiSettings) -> Self {
         OpenApiGenerator {
             schema_generator: settings.schema_settings.clone().into_generator(),
-            settings,
-            operations: Default::default(),
+            settings: settings.clone(),
+            security_schemes: Map::default(),
+            operations: Map::default(),
         }
+    }
+
+    /// Adds/Replace a security scheme to the generated output
+    pub fn add_security_scheme(&mut self, name: String, scheme: SecurityScheme) {
+        self.security_schemes.insert(name, scheme);
     }
 
     /// Add a new `HTTP Method` to the collection of endpoints in the `OpenApiGenerator`.
@@ -57,6 +64,7 @@ impl OpenApiGenerator {
     }
 
     /// Obtain the internal `SchemaGenerator` object.
+    #[must_use]
     pub fn schema_generator(&self) -> &SchemaGenerator {
         &self.schema_generator
     }
@@ -67,9 +75,16 @@ impl OpenApiGenerator {
     }
 
     /// Generate an `OpenApi` specification for all added operations.
+    #[must_use]
     pub fn into_openapi(self) -> OpenApi {
         let mut schema_generator = self.schema_generator;
         let mut schemas = schema_generator.take_definitions();
+
+        // Add the security schemes
+        let mut schemes: Map<String, RefOr<SecurityScheme>> = Default::default();
+        for (name, schema) in self.security_schemes {
+            schemes.insert(name, schema.into());
+        }
 
         for visitor in schema_generator.visitors_mut() {
             for schema in schemas.values_mut() {
@@ -90,16 +105,17 @@ impl OpenApiGenerator {
                 paths
             },
             components: Some(Components {
-                schemas: Map::from_iter(schemas.into_iter().map(|(k, v)| (k, v.into()))),
+                schemas: schemas.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                security_schemes: schemes,
                 ..Default::default()
             }),
-            ..Default::default()
+            ..OpenApi::default()
         }
     }
 }
 
 fn set_operation(path_item: &mut PathItem, method: Method, op: Operation) {
-    use Method::*;
+    use Method::{Connect, Delete, Get, Head, Options, Patch, Post, Put, Trace};
     let option = match method {
         Get => &mut path_item.get,
         Put => &mut path_item.put,
